@@ -1,0 +1,372 @@
+---
+title: "R Stats GSoC 2021 Student Test"
+author: "Thummanoon Kunanuntakij"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  echo = TRUE
+)
+```
+
+# R Stats GSoC 2021 Student Test
+
+## A. Intermediate Problem Statement
+
+**Intermediate**: Locate the `expected-returns-replications.Rmd` file in the vignettes directory. Refactor sections of this vignettes to replace functions from the `plm` package with the `fitFfm` or `fitFfmDT` functions associated with the `FactorAnalytics` package. This may include debugging upstream issues with merging data series, as well as reformatting data to match requirements of the new function arguments.
+
+## Part 1: Reference Code From the Original Vignette
+
+Reference: [ExpectedReturns/expected-returns-replications.Rmd at master · JustinMShea/ExpectedReturns (github.com)](https://github.com/JustinMShea/ExpectedReturns/blob/master/vignettes/expected-returns-replications.Rmd)
+
+### 1.1 Estimating factor models
+
+```{r}
+library(ExpectedReturns)
+
+### Experimenting fitFfm() to fit FF three-factor model ###
+
+## Get and set data to pass to fitFfm()
+data("factorDataSetDjia5Yrs") 
+data("FF3.monthly")
+
+# select some variables needed
+factorDataSetDjia5Yrs <- factorDataSetDjia5Yrs[, c('DATE', 'TICKER', 'NAME', 'RETURN.OLD', 'RETURN', 'RETURN.DIFF')]
+
+# make 'ff3.data.monthly' and 'factorDataSetDjia5Yrs' compatible for testing
+ff3.data.monthly.dates <- index(FF3.monthly)
+ff3.data.monthly <- as.data.frame(coredata(FF3.monthly))
+ff3.data.monthly <- cbind(ff3.data.monthly.dates, ff3.data.monthly)
+colnames(ff3.data.monthly)[1] <- 'DATE'
+factorDataSetDjia5Yrs$DATE <- as.Date(factorDataSetDjia5Yrs$DATE)
+
+test.data <- merge(factorDataSetDjia5Yrs, ff3.data.monthly)
+
+# excess returns
+test.data$EXC.RETURN <- test.data$RETURN - test.data$RF # FF risk-free rate (one-month Treasury bill rate from Ibbotson Associates)
+test.data$RF <- NULL
+```
+
+### 1.2 Fama-French
+
+```{r}
+
+# factor exposures
+exposure.vars <- c('MKT.RF', 'SMB', 'HML')
+
+## Run fitFfm() to fit factor model using cross-sectional regression
+fit.test <- fitFfm(data=test.data, asset.var="TICKER", ret.var="EXC.RETURN", date.var="DATE", 
+                  exposure.vars=exposure.vars, addIntercept=TRUE)
+fit.test
+
+```
+
+### 1.3 Fama-MacBeth
+
+```{r}
+periods <- unique(factorDataSetDjia5Yrs$DATE)
+tickers <- unique(factorDataSetDjia5Yrs$TICKER)
+factor.vars <- c('MKT.RF', 'SMB', 'HML')
+
+# Run N time-series regressions
+beta.coefs <- matrix(NA, length(tickers), length(factor.vars) + 1)
+for (i in 1:length(tickers)) {
+  asset.reg <- lm(EXC.RETURN ~ MKT.RF + SMB + HML, data=test.data[which(test.data[, 'TICKER'] == tickers[i]), ])
+  beta.coefs[i, ] <- asset.reg$coefficients
+}
+row.names(beta.coefs) <- tickers
+colnames(beta.coefs) <- c('(Intercept)', 'MKT.RF', 'SMB', 'HML')
+beta.coefs
+
+# Run T cross-sectional regressions 
+gamma.coefs <- matrix(NA, length(periods), length(factor.vars) + 1)
+gamma.rsq <- matrix(NA, length(periods), 1)
+for (t in 1:length(periods)) {
+  per.period.assets.ret <- test.data[which(test.data[, 'DATE'] == periods[t]), 'EXC.RETURN']
+  data <- data.frame('EXC.RETURN'=per.period.assets.ret, beta.coefs[, 2:4]) # excluding prev. est. intercepts
+  time.reg <- lm(EXC.RETURN ~ MKT.RF + SMB + HML, data=data)
+  gamma.coefs[t, ] <- time.reg$coefficients
+}
+gamma.coefs <- data.frame(periods, gamma.coefs)
+colnames(gamma.coefs) <- c('DATE', '(Intercept)', 'MKT.RF', 'SMB', 'HML')
+gamma.coefs
+
+# Average last regression coefficients estimates
+avg.coefs <- colMeans(gamma.coefs[, 2:ncol(gamma.coefs)])
+avg.coefs
+```
+
+#### 1.4 Fama-Macbeth plm
+
+```{r}
+library(plm)             # to estimate model
+
+# match and merge FF3 factors data and stocks data
+test.data.plm <- test.data
+
+# Indexes to determine panel structure
+# 'PERIOD.ID', each date gets same number id across
+periods <- unique(factorDataSetDjia5Yrs$DATE)
+periods.id <- 1:length(periods)
+periods.id <- data.frame('DATE'=periods, 'PERIOD.ID'=periods.id)
+test.data.plm <- merge(test.data.plm, periods.id, by='DATE')
+# 'ASSET.ID', each asset gets same number id across
+tickers <- unique(factorDataSetDjia5Yrs$TICKER)
+assets.id <- 1:length(tickers)
+assets.id <- data.frame('TICKER'=tickers, 'ASSET.ID'=assets.id)
+test.data.plm <- merge(test.data.plm, assets.id) # this messes up dates order within a ticker
+
+# Sort data set
+test.data.plm <- test.data.plm[order(test.data.plm[, 'ASSET.ID'], test.data.plm[, 'PERIOD.ID']), ]
+row.names(test.data.plm) <- NULL
+
+#test.data.plm$EXC.RETURN <- test.data.plm$RETURN - test.data.plm$RF # FF risk-free rate (1-month T-bill rate)
+test.data.input <- test.data.plm[, c("ASSET.ID", "PERIOD.ID", "DATE", "EXC.RETURN", "MKT.RF", "SMB", "HML")]
+
+# Time-series regressions
+fm.ts.reg <- plm::pmg(EXC.RETURN ~ MKT.RF + SMB + HML, 
+                      data=test.data.input, index=c('ASSET.ID', 'PERIOD.ID'))
+summary(fm.ts.reg)
+betas <- t(fm.ts.reg$indcoef) # all coefficients
+rownames(betas) <- tickers
+colnames(betas) <- paste('BETA', colnames(betas), sep='.')
+betas
+
+# (Check my Fama-MacBeth snippet vs. `plm` version)
+betas == beta.coefs
+
+# Cross-sectional regressions
+test.data.input.second <- test.data.input[order(test.data.input[, 'DATE']), ]
+test.data.input.second <- data.frame(
+  test.data.input.second[, c("PERIOD.ID", "ASSET.ID", "DATE", "EXC.RETURN")], 
+  betas[, 2:4]
+)
+
+fm.cs.reg <- plm::pmg(EXC.RETURN ~ BETA.MKT.RF + BETA.SMB + BETA.HML, 
+                      data=test.data.input.second, index=c('PERIOD.ID', 'ASSET.ID'))
+summary(fm.cs.reg)
+gammas <- t(fm.cs.reg$indcoef) # all coefficients
+gammas <- data.frame(periods, gammas)
+colnames(gammas) <- c('DATE', '(Intercept)', 'MKT.RF', 'SMB', 'HML')
+gammas
+
+# (Check my Fama-MacBeth snippet vs. `plm` version)
+gammas == gamma.coefs
+```
+
+## Part 2: Student Solution
+
+### Fama-MacBeth Using \`FactorAnalytic\` Package
+
+**Note:** To prevent confusion, all new variables in this section was suffixed with `stu_`
+
+### 2.1 Fama-MacBeth Part 1: Time Series Regression to find factor exposure (Beta)
+
+In the first part, I used `fitTsfm` to do a time series regression. The function needs an input in a time series with `Date` as row indexes and other values in their own columns.
+
+I used table pivoting to get columns of `TICKER` with excess return `EXC.RETURN` as the values.
+
+```{r}
+stu_pivot_test_data <- as.data.frame(data.table::dcast(test.data, DATE ~ TICKER,  value.var = "EXC.RETURN"))
+stu_pivot_test_data
+```
+
+Then, I added factor returns to the result and set `Date` as row indexes.
+
+```{r}
+stu_merged_test_data <- merge(stu_pivot_test_data,
+                              ff3.data.monthly[c('DATE', factor.vars)], by='DATE')
+row.names(stu_merged_test_data) <- stu_merged_test_data$DATE
+stu_merged_test_data$DATE <- NULL
+
+stu_merged_test_data
+```
+
+Now the data was ready to be fit.
+
+```{r}
+stu_fit_time_series <- fitTsfm(
+  data=stu_merged_test_data,
+  asset.names=unique(test.data$TICKER),
+  mkt.name="MKT.RF",
+  factor.names=factor.vars
+)
+```
+
+```{r}
+stu_beta_coefs <- as.matrix(cbind(stu_fit_time_series$alpha, stu_fit_time_series$beta))
+stu_beta_coefs
+```
+
+#### Test Beta against other methods
+
+Test the beta against the beta in the `Fama-MacBeth` Section (1.3)
+
+```{r}
+all(stu_beta_coefs == beta.coefs)
+```
+
+Test the beta against the beta in the `Fama-MacBeth plm` Section (1.4)
+
+```{r}
+all(stu_beta_coefs == betas)
+```
+
+### 2.2 Fama-MacBeth Part 2: Cross Sectional Regression to find factor Risk Premia (Gamma)
+
+I prepared the input data the same way as the reference code, using `BETA` as a prefix.
+
+```{r}
+colnames(stu_beta_coefs) <- paste('BETA', colnames(stu_beta_coefs), sep='.')
+
+stu_test_data_input_second <- test.data[order(test.data[, 'DATE']), ]
+stu_test_data_input_second <- data.frame(
+  stu_test_data_input_second[, c("DATE", "TICKER", "EXC.RETURN")], 
+  stu_beta_coefs[, 2:4]
+)
+```
+
+```{r}
+stu_test_data_input_second
+```
+
+Now I used `fitFfm` to do cross sectional regression to find factor risk premia (Gamma).
+
+```{r}
+stu_fit_cross_section <- fitFfm(data=stu_test_data_input_second,
+                   asset.var="TICKER",
+                   ret.var="EXC.RETURN",
+                   date.var="DATE",
+                   exposure.vars=c("BETA.MKT.RF", "BETA.SMB", "BETA.HML"),
+                   addIntercept=TRUE,
+                   lagExposures = FALSE)
+```
+
+Format and add `DATE` to the gamma coefficient variable the same way with the reference code to be able to compare the result.
+
+```{r}
+stu_gamma_coefs <- data.frame(periods, stu_fit_cross_section$factor.returns)
+colnames(stu_gamma_coefs) <- c('DATE', '(Intercept)', 'MKT.RF', 'SMB', 'HML')
+row.names(stu_gamma_coefs) <- NULL
+```
+
+```{r}
+stu_gamma_coefs
+```
+
+#### Test Gamma against other methods
+
+Test gamma against the gamma in the `Fama-Macbeth` Section (1.3)
+
+```{r}
+all(stu_gamma_coefs == gamma.coefs)
+```
+
+Test gamma against the gamma in the `Fama-Macbeth plm` Section (1.4)
+
+```{r}
+all(stu_gamma_coefs == gammas)
+```
+
+Test average gamma value coefficient against the `Fama-Macbeth` Section (1.3)
+
+```{r}
+stu_avg_coefs <- colMeans(stu_gamma_coefs[, 2:ncol(stu_gamma_coefs)])
+all(stu_avg_coefs == avg.coefs)
+```
+
+##  B. Hard Problem Statement
+
+**Harder:** Reflect on the steps above. How do you interpret the results of the new functions? In addition, was there any repetitious code in the vignette that may be written as a function for future use? If so please include it as an example. What data transformations or models might have benefited from writing unit tests? Please include examples for these as well.
+
+#### How do you interpret the results of the new functions?
+
+The result are exactly the same for all function. The functions in `FactorAnalytics` are the most convenience to use as the meaning of the functions are clear. One is used for time series and another is used for cross sectional. Their input arguments are also explicitly named in investment context. For example, it asks for `asset.var` and `exposure.vars`.
+
+However, the inconsistent in its naming in the package causes confusion. For example, in `fitfFm`, the asset argument is called `asset.var` while, in `fitTsfm`, it is called `asset.names`. Because some R functions don't complain about undeclared named arguments, It can cause unnecessary bug if one is not careful. Also, the input data format are different. This caused the user to tailor an input specifically for the function.
+
+#### Is there any repetitious code in the vignette that may be written as a function for future use?
+
+Because the vignette is quite short and because of the inconsistent convention mention above, there aren't many obvious repetition found in the vignette.
+
+I could only suggest some small functions that can add a little bit of convenience and/or readability.
+
+1.  **Add row and column name**
+
+    from
+
+    ```{r eval = FALSE}
+    row.names(beta.coefs) <- tickers
+    colnames(beta.coefs) <- c('(Intercept)', 'MKT.RF', 'SMB', 'HML')
+    ```
+
+    to
+
+    ```{r}
+    add_row_col_names <- function(data, row_names, col_names) {
+      row.names(data) <- row_names
+      colnames(data) <- col_names
+    }
+    add_row_col_names(beta.coefs, tickers, c('(Intercept)', 'MKT.RF', 'SMB', 'HML'))
+    ```
+
+2.  **Create a placeholder matrix**
+
+    from
+
+    ```{r eval = FALSE}
+    matrix(NA, length(periods), length(factor.vars) + 1)
+    ```
+
+    to
+
+    ```{r}
+    empty_matrix <- function(row_size, col_size) {
+      matrix(NA, row_size, col_size)
+    }
+    empty_matrix(length(periods), length(factor.vars) + 1)
+    ```
+
+3.  **Constant Values**
+
+    It is considered better to use constant variables for frequently used values. This will prevent error caused by typo.
+
+    ```{r}
+    FACTORS_COLUMNS <- c('MKT.RF', 'SMB', 'HML')
+    BETA_COLUMNS <- c('(Intercept)', FACTORS_COLUMNS)
+    CROSS_SECTIONAL_COLUMNS <- c('DATE', BETA_COLUMNS)
+    ```
+
+#### What data transformations or models might have benefited from writing unit tests?
+
+1.  Obviously, as it is shown in this vignette When creating a helper function like `fitFfm` and `fitTsfm`, it is great to have a test that you can run to confirm that your function run correctly. The test sections in the Intermediate task serve as an example to this.
+
+2.  Because of a non-obvious input format of `fitFfm` and `fitTsfm`, it is nice to have a unit test to check if your program prepare a correct data format for the function
+
+    ```{r}
+    test_fitTsfm_input_format <- function(data, asset_cols, factor_cols) {
+      all(
+        c(
+          tryCatch(class(as.Date(row.names(data))) == 'Date',  
+                error = function(err) {FALSE}),
+          asset_cols %in% colnames(data),
+          factor_cols %in% colnames(data)
+        )
+      )
+    }
+    test_fitTsfm_asset_names <- unique(test.data$TICKER)
+    all(
+      c(
+        # Incorrect input. No Date-like row names.
+        test_fitTsfm_input_format(stu_pivot_test_data, test_fitTsfm_asset_names, factor.vars) == FALSE,
+        # Correct input.
+        test_fitTsfm_input_format(stu_merged_test_data, test_fitTsfm_asset_names, factor.vars) == TRUE
+      )
+    )
+    ```
