@@ -281,7 +281,7 @@ stu_avg_coefs <- colMeans(stu_gamma_coefs[, 2:ncol(stu_gamma_coefs)])
 all(stu_avg_coefs == avg.coefs)
 ```
 
-##  B. Hard Problem Statement
+## B. Hard Problem Statement
 
 **Harder:** Reflect on the steps above. How do you interpret the results of the new functions? In addition, was there any repetitious code in the vignette that may be written as a function for future use? If so please include it as an example. What data transformations or models might have benefited from writing unit tests? Please include examples for these as well.
 
@@ -351,10 +351,13 @@ I could only suggest some small functions that can add a little bit of convenien
 
     ```{r}
     test_fitTsfm_input_format <- function(data, asset_cols, factor_cols) {
+      is_df_with_date <- tryCatch(class(as.Date(row.names(data))) == 'Date',  
+                error = function(err) {FALSE})
+      is_xts <- xts::is.xts(data)
+
       all(
         c(
-          tryCatch(class(as.Date(row.names(data))) == 'Date',  
-                error = function(err) {FALSE}),
+          (is_df_with_date || is_xts),
           asset_cols %in% colnames(data),
           factor_cols %in% colnames(data)
         )

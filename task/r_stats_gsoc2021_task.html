@@ -11,7 +11,7 @@
 
 <meta name="author" content="Thummanoon Kunanuntakij" />
 
-<meta name="date" content="2021-02-23" />
+<meta name="date" content="2021-02-24" />
 
 <title>R Stats GSoC 2021 Student Test</title>
 
@@ -169,7 +169,7 @@ pre code {
 
 <h1 class="title toc-ignore">R Stats GSoC 2021 Student Test</h1>
 <h4 class="author">Thummanoon Kunanuntakij</h4>
-<h4 class="date">2021-02-23</h4>
+<h4 class="date">2021-02-24</h4>
 
 </div>
 
@@ -792,10 +792,13 @@ CROSS_SECTIONAL_COLUMNS &lt;- c(&#39;DATE&#39;, BETA_COLUMNS)</code></pre></li>
 <li><p>Obviously, as it is shown in this vignette When creating a helper function like <code>fitFfm</code> and <code>fitTsfm</code>, it is great to have a test that you can run to confirm that your function run correctly. The test sections in the Intermediate task serve as an example to this.</p></li>
 <li><p>Because of a non-obvious input format of <code>fitFfm</code> and <code>fitTsfm</code>, it is nice to have a unit test to check if your program prepare a correct data format for the function</p>
 <pre class="r"><code>test_fitTsfm_input_format &lt;- function(data, asset_cols, factor_cols) {
+  is_df_with_date &lt;- tryCatch(class(as.Date(row.names(data))) == &#39;Date&#39;,  
+            error = function(err) {FALSE})
+  is_xts &lt;- xts::is.xts(data)
+
   all(
     c(
-      tryCatch(class(as.Date(row.names(data))) == &#39;Date&#39;,  
-            error = function(err) {FALSE}),
+      (is_df_with_date || is_xts),
       asset_cols %in% colnames(data),
       factor_cols %in% colnames(data)
     )
