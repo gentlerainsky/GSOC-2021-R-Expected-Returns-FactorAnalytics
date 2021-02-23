@@ -94,7 +94,8 @@ as reformatting data to match requirements of the new function arguments.
 
 #### Solution
 
-The answer file is [here (r_stats_gsoc2021_task.html).](/task/r_stats_gsoc2021_task.html)
+The answer file is here [ [r_stats_gsoc2021_task.html](/task/r_stats_gsoc2021_task.html) or 
+[r_stats_gsoc2021_task.Rmd](/task/r_stats_gsoc2021_task.Rmd) ]
 
 ##### Additional Explanation on the process of solving the problem
 
@@ -178,4 +179,5 @@ an example. What data transformations or models might have benefited from writin
 examples for these as well.
 
 #### Solution
-The answer is at the very bottom of [the same file (r_stats_gsoc2021_task.html).](/task/r_stats_gsoc2021_task.html)
+The answer is at the very bottom of the same file. [ [r_stats_gsoc2021_task.html](/task/r_stats_gsoc2021_task.html) or 
+[r_stats_gsoc2021_task.Rmd](/task/r_stats_gsoc2021_task.Rmd) ]
